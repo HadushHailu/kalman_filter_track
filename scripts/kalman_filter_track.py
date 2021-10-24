@@ -41,8 +41,8 @@ class KalmanFilterTrack:
         self.P_new = np.empty([self.num_s, self.num_s])
 
         # init Obstacle
-        self_obstacle_Ux = 0
-        self_obstacle_Uy = 0
+        self.obstacle_Ux = 0
+        self.obstacle_Uy = 0
         self.obstacle_Vx = 0
         self.obstacle_Vy = 0
         self.obstacle_speed = 0
@@ -55,60 +55,63 @@ class KalmanFilterTrack:
 
     def clusterCallback(self,msg):
         rospy.loginfo("Cluster recieved! (%f %f) r: %f",msg.center.x,msg.center.y,msg.radius)
-        self_obstacle_Ux = msg.center.x
-        self_obstacle_Uy = msg.center.y
-        self.obstacle_speed = sqrt(pow(self.obstacle_Vx,2) + pow(self.obstacle_Vy,2))
+        self.obstacle_Ux = msg.center.x
+        self.obstacle_Uy = msg.center.y
+        self.obstacle_speed = math.sqrt(math.pow(self.obstacle_Vx,2) + math.pow(self.obstacle_Vy,2))
+        self.start_kalman()
 
     def init_kalman(self):
 
-        self.Hk = [1,0,0,0,
-                   0,1,0,0]
+        self.Hk = np.array([[1,0,0,0],
+                            [0,1,0,0]])
 
-        self.Q = [0.0004, 0.0,    0.0,    0.0,
-                  0.0,    0.0004, 0.0,    0.0,
-                  0.0,    0.0,    0.0001, 0.0,
-                  0.0,    0.0,    0.0,    0.0001 ]
+        self.Q = np.array([[0.0004, 0.0,    0.0,    0.0],
+                           [0.0,    0.0004, 0.0,    0.0],
+                           [0.0,    0.0,    0.0001, 0.0],
+                           [0.0,    0.0,    0.0,    0.0001]])
 
-        self.R = [0.0016, 0.0, 
-                  0.0,    0.0016 ]
+        self.R = np.array([[0.0016, 0.0], 
+                           [0.0,    0.0016]])
 
     def reset_kalman(self):
 
         self.obstacle_Vx = 0
         self.obstacle_Vy = 0
 
-        self.Xk_1 = [self.obstacle_Ux,
-                     self_obstacle_Uy,
-                     self.obstacle_Vx,
-                     self.obstacle_Vy]
+        self.Xk_1 =np.array([[self.obstacle_Ux],
+                             [self.obstacle_Uy],
+                             [self.obstacle_Vx],
+                             [self.obstacle_Vy]])
 
-        self.Pk_1 = [0.0016, 0.0,    0.0,    0.0,
-                     0.0,    0.0016, 0.0,    0.0,
-                     0.0,    0.0,    0.0004, 0.0,
-                     0.0,    0.0,    0.0,    0.0004]
+        self.Pk_1 = np.array([[0.0016, 0.0,    0.0,    0.0],
+                              [0.0,    0.0016, 0.0,    0.0],
+                              [0.0,    0.0,    0.0004, 0.0],
+                              [0.0,    0.0,    0.0,    0.0004]])
         
-        self.Zk = [self.obstacle_Ux,
-                   self_obstacle_Uy]
+        self.Zk = np.array([[self.obstacle_Ux],
+                            [self.obstacle_Uy]])
 
 
     def update_kalman(self):
         self.finish_time_current_scan = time.time()
         self.dt = self.finish_time_current_scan - self.finish_time_previous_scan # in sec
 
-        self.Fk  = [1, 0,  self.dt, 0,
-                    0, 1,  0,       self.dt,
-                    0, 0,  1,       0,
-                    0, 0,  0,       1]
-        #Prediction
+        self.Fk  = np.array([[1, 0,  self.dt, 0],
+                            [0, 1,  0,       self.dt],
+                            [0, 0,  1,       0],
+                            [0, 0,  0,       1]])
+        #Predictioni
+        rospy.loginfo("type fk: %s xk_1:%s",type(self.Fk),type(self.Xk_1))
+        #rospy.loginfo("xk:%f xk_1:%f",self.Xk.shape,self.Xk_1.shape)
         self.Xk = np.dot(self.Fk, self.Xk_1)
         self.Pk = multi_dot([self.Fk,self.Pk_1,self.Fk.T]) + self.Q
         #self.Pk = np.dot(self.Fk, np.dot(self.Pk_1, self.Fk.T)) + self.Q
 
         #Measurement
-        self.Zk = [self.obstacle_Ux,
-                   self_obstacle_Uy]
+        self.Zk = np.array([[self.obstacle_Ux],
+                            [self.obstacle_Uy]])
 
-        #Kalman gain*
+        #Kalman gain
         self.K = np.dot(np.dot(self.Pk,self.Hk.T),np.linalg.inv(multi_dot([self.Hk,self.Pk,self.Hk.T])+ self.R))
 
         #calaculate the optimal estimate
@@ -120,7 +123,7 @@ class KalmanFilterTrack:
         self.obstacle_Uy = self.X_new[1]
         self.obstacle_Vx = self.X_new[2]
         self.obstacle_Vy = self.X_new[3]
-        self.obstacle_speed = sqrt(pow(self.obstacle_Vx,2) + pow(self.obstacle_Vy,2))
+        self.obstacle_speed = math.sqrt(math.pow(self.obstacle_Vx,2) + math.pow(self.obstacle_Vy,2))
 
         #pub
         k_est = Odometry()
@@ -129,6 +132,8 @@ class KalmanFilterTrack:
         k_est.twist.twist.linear.x = self.obstacle_Vx
         k_est.twist.twist.linear.y = self.obstacle_Vy
         self.pub_.publish(k_est)
+
+        rospy.loginfo("Kalman estimate: p:(%f,%f) v:(%f,%f)",self.obstacle_Ux,self.obstacle_Uy,self.obstacle_Vx,self.obstacle_Vy)
 
         #Feed the new optimal estimate as a prior for next prediction
         self.Xk_1 = self.X_new
